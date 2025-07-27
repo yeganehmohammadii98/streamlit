@@ -1469,17 +1469,583 @@ def history_page():
 
 
 def show_feedback_history():
-    """Show historical corrections and feedback"""
+    """Show comprehensive feedback and corrections history with analytics"""
+
     st.header("📊 Feedback & Corrections History")
-    st.info("⚠️ Feedback functionality requires database and utils modules")
+    st.markdown("Track how the AI is learning and improving from user feedback")
+
+    if not DATABASE_AVAILABLE:
+        st.error("❌ Database not available - cannot load feedback history")
+        return
+
+    db_session = get_db_session()
+    if not db_session:
+        st.error("❌ Cannot connect to database")
+        return
+
+    try:
+        # Get all feedback and extractions
+        all_feedback = db_session.query(UserFeedback).order_by(UserFeedback.feedback_date.desc()).all()
+        all_extractions = db_session.query(FieldExtraction).order_by(FieldExtraction.created_date.desc()).all()
+
+        if not all_feedback and not all_extractions:
+            st.info("📋 No feedback history yet. Process some invoices and make corrections to see data here!")
+            st.markdown("""
+            **How to generate feedback data:**
+            1. Go to "Upload & Process" 
+            2. Upload and process an invoice
+            3. Make corrections in the "Review & Correct Fields" section
+            4. Return here to see your feedback history
+            """)
+            return
+
+        # Summary Statistics
+        st.subheader("📈 Learning Summary")
+
+        corrections = [f for f in all_feedback if f.feedback_type == 'correction']
+        confirmations = [f for f in all_feedback if f.feedback_type == 'confirmation']
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Total Feedback Items", len(all_feedback))
+        with col2:
+            st.metric("Corrections Made", len(corrections))
+        with col3:
+            st.metric("Confirmations", len(confirmations))
+        with col4:
+            if len(all_feedback) > 0:
+                accuracy_rate = len(confirmations) / len(all_feedback) * 100
+                st.metric("Accuracy Rate", f"{accuracy_rate:.1f}%")
+            else:
+                st.metric("Accuracy Rate", "N/A")
+
+        # Learning Progress Over Time
+        if all_extractions:
+            st.subheader("📊 Learning Progress Over Time")
+
+            try:
+                # Create timeline data
+                timeline_data = []
+                for extraction in reversed(all_extractions):  # Oldest first for timeline
+                    timeline_data.append({
+                        'Date': extraction.created_date.strftime('%Y-%m-%d'),
+                        'Invoice': extraction.invoice_id,
+                        'Corrections': extraction.correction_count,
+                        'Accuracy': max(0, 100 - (extraction.correction_count * 12.5))  # Rough accuracy estimate
+                    })
+
+                if len(timeline_data) > 1:
+                    # Convert to DataFrame for plotting
+                    import pandas as pd
+                    df_timeline = pd.DataFrame(timeline_data)
+
+                    if PLOTLY_AVAILABLE:
+                        # Create accuracy trend chart
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=df_timeline['Date'],
+                            y=df_timeline['Accuracy'],
+                            mode='lines+markers',
+                            name='AI Accuracy',
+                            line=dict(color='#1f77b4', width=3),
+                            marker=dict(size=8)
+                        ))
+
+                        fig.update_layout(
+                            title="AI Accuracy Improvement Over Time",
+                            xaxis_title="Date",
+                            yaxis_title="Estimated Accuracy (%)",
+                            yaxis=dict(range=[0, 100]),
+                            height=400
+                        )
+
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.dataframe(df_timeline, use_container_width=True)
+
+            except Exception as e:
+                st.warning(f"Could not generate timeline chart: {e}")
+
+        # Field-Specific Accuracy Analysis
+        st.subheader("🎯 Field-Specific Learning Analysis")
+
+        if corrections:
+            # Analyze corrections by field
+            field_analysis = {}
+            for correction in corrections:
+                field_name = correction.field_name
+                if field_name not in field_analysis:
+                    field_analysis[field_name] = {
+                        'total_corrections': 0,
+                        'low_confidence_corrections': 0,
+                        'examples': []
+                    }
+
+                field_analysis[field_name]['total_corrections'] += 1
+
+                if correction.confidence_before < 0.5:
+                    field_analysis[field_name]['low_confidence_corrections'] += 1
+
+                # Store example corrections (limit to 3 per field)
+                if len(field_analysis[field_name]['examples']) < 3:
+                    field_analysis[field_name]['examples'].append({
+                        'original': correction.original_value,
+                        'corrected': correction.corrected_value,
+                        'confidence': correction.confidence_before,
+                        'date': correction.feedback_date
+                    })
+
+            # Display field analysis
+            for field_name, analysis in field_analysis.items():
+                with st.expander(
+                        f"📋 {field_name.replace('_', ' ').title()} - {analysis['total_corrections']} corrections"):
+
+                    col1, col2 = st.columns([1, 2])
+
+                    with col1:
+                        st.metric("Total Corrections", analysis['total_corrections'])
+                        st.metric("Low Confidence Issues", analysis['low_confidence_corrections'])
+
+                        # Calculate improvement trend
+                        if analysis['total_corrections'] > 2:
+                            st.success("🔄 AI is learning this field!")
+                        elif analysis['total_corrections'] > 5:
+                            st.warning("⚠️ Field needs attention")
+
+                    with col2:
+                        st.markdown("**Recent correction examples:**")
+                        for i, example in enumerate(analysis['examples'], 1):
+                            confidence_color = "🟢" if example['confidence'] > 0.8 else "🟡" if example[
+                                                                                                  'confidence'] > 0.5 else "🔴"
+                            st.write(
+                                f"{i}. {confidence_color} `'{example['original']}'` → `'{example['corrected']}'` ({example['confidence']:.0%})")
+
+        # Recent Feedback Details
+        st.subheader("📝 Recent Feedback Details")
+
+        # Filter and pagination
+        col1, col2, col3 = st.columns([1, 1, 2])
+
+        with col1:
+            feedback_filter = st.selectbox(
+                "Filter by type:",
+                ["All", "Corrections Only", "Confirmations Only"]
+            )
+
+        with col2:
+            show_count = st.selectbox(
+                "Show entries:",
+                [10, 25, 50, 100],
+                index=1
+            )
+
+        # Apply filters
+        filtered_feedback = all_feedback
+        if feedback_filter == "Corrections Only":
+            filtered_feedback = [f for f in all_feedback if f.feedback_type == 'correction']
+        elif feedback_filter == "Confirmations Only":
+            filtered_feedback = [f for f in all_feedback if f.feedback_type == 'confirmation']
+
+        # Show feedback entries
+        if filtered_feedback:
+            st.markdown(
+                f"**Showing {min(show_count, len(filtered_feedback))} of {len(filtered_feedback)} feedback entries:**")
+
+            for i, feedback in enumerate(filtered_feedback[:show_count]):
+                # Determine feedback type styling
+                if feedback.feedback_type == 'correction':
+                    type_emoji = "✏️"
+                    type_color = "orange"
+                elif feedback.feedback_type == 'confirmation':
+                    type_emoji = "✅"
+                    type_color = "green"
+                else:
+                    type_emoji = "📝"
+                    type_color = "blue"
+
+                with st.expander(
+                        f"{type_emoji} {feedback.feedback_type.title()} #{feedback.id} - {feedback.field_name.replace('_', ' ').title()} - {feedback.feedback_date.strftime('%Y-%m-%d %H:%M')}"):
+
+                    col1, col2 = st.columns([1, 1])
+
+                    with col1:
+                        st.markdown("**Feedback Details:**")
+                        st.write(f"**Field:** {feedback.field_name.replace('_', ' ').title()}")
+                        st.write(f"**Type:** {feedback.feedback_type.title()}")
+                        st.write(f"**Date:** {feedback.feedback_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                        st.write(f"**Confidence Before:** {feedback.confidence_before:.0%}")
+                        if feedback.user_rating:
+                            stars = "⭐" * feedback.user_rating
+                            st.write(f"**User Rating:** {stars} ({feedback.user_rating}/5)")
+
+                    with col2:
+                        st.markdown("**Value Changes:**")
+
+                        if feedback.feedback_type == 'correction':
+                            st.markdown("**Original (AI):**")
+                            st.code(feedback.original_value or "Empty", language=None)
+                            st.markdown("**Corrected (User):**")
+                            st.code(feedback.corrected_value or "Empty", language=None)
+                        else:
+                            st.markdown("**Confirmed Value:**")
+                            st.code(feedback.original_value or "Empty", language=None)
+                            st.success("✅ User confirmed this extraction was correct")
+
+                    # Show learning impact
+                    if feedback.is_used_for_training:
+                        st.info("🧠 This feedback was used to improve the AI model")
+                    else:
+                        st.warning("⏳ This feedback is pending training integration")
+
+        # Export functionality
+        st.subheader("📥 Export Feedback Data")
+
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            if st.button("📊 Export to CSV"):
+                # Create CSV data
+                csv_data = []
+                for feedback in all_feedback:
+                    csv_data.append({
+                        'ID': feedback.id,
+                        'Invoice_ID': feedback.invoice_id,
+                        'Field_Name': feedback.field_name,
+                        'Feedback_Type': feedback.feedback_type,
+                        'Original_Value': feedback.original_value,
+                        'Corrected_Value': feedback.corrected_value,
+                        'Confidence_Before': feedback.confidence_before,
+                        'User_Rating': feedback.user_rating,
+                        'Feedback_Date': feedback.feedback_date.isoformat(),
+                        'Used_for_Training': feedback.is_used_for_training
+                    })
+
+                import pandas as pd
+                df_export = pd.DataFrame(csv_data)
+                csv_string = df_export.to_csv(index=False)
+
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv_string,
+                    file_name=f"invoice_ai_feedback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+
+        with col2:
+            st.info("💡 Export your feedback data to analyze AI learning patterns or for backup purposes")
+
+        # Learning Insights
+        st.subheader("🔍 Learning Insights")
+
+        try:
+            learning_system = LearningSystem()
+            learning_patterns = learning_system.get_learning_patterns()
+
+            if 'common_mistakes' in learning_patterns and learning_patterns['common_mistakes']:
+                st.markdown("**🎯 Most Common Correction Patterns:**")
+
+                for i, mistake in enumerate(learning_patterns['common_mistakes'][:5], 1):
+                    field_name = mistake['field'].replace('_', ' ').title()
+                    st.write(
+                        f"{i}. **{field_name}:** `'{mistake['wrong']}'` → `'{mistake['correct']}'` ({mistake['count']} times)")
+
+                st.info("🧠 The AI has learned these patterns and will apply them to future invoices!")
+
+            # Show field accuracy if available
+            if 'field_accuracy' in learning_patterns and learning_patterns['field_accuracy']:
+                st.markdown("**📊 Current Field Accuracy:**")
+
+                accuracy_data = learning_patterns['field_accuracy']
+                for field_name, accuracy in sorted(accuracy_data.items(), key=lambda x: x[1], reverse=True):
+                    field_display = field_name.replace('_', ' ').title()
+                    color = "🟢" if accuracy > 0.8 else "🟡" if accuracy > 0.6 else "🔴"
+                    st.write(f"{color} **{field_display}:** {accuracy:.0%}")
+
+        except Exception as e:
+            st.warning(f"Could not load learning insights: {e}")
+
+    except Exception as e:
+        st.error(f"Error loading feedback history: {e}")
+    finally:
+        db_session.close()
 
 
 def show_learning_dashboard():
-    """Show comprehensive learning and improvement dashboard"""
+    """Show comprehensive AI learning and improvement dashboard"""
+
     st.header("🧠 AI Learning Dashboard")
-    st.info("⚠️ Learning dashboard requires database and utils modules")
+    st.markdown("Monitor how the AI is learning and improving from user feedback")
 
+    if not DATABASE_AVAILABLE:
+        st.error("❌ Database not available - cannot load learning data")
+        return
 
+    try:
+        learning_system = LearningSystem()
+
+        # Get comprehensive statistics
+        stats = learning_system.get_field_statistics()
+        patterns = learning_system.get_learning_patterns()
+
+        # Overall Performance Overview
+        st.subheader("📊 Overall AI Performance")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Total Invoices Processed", stats.get('total_extractions', 0))
+        with col2:
+            st.metric("User Corrections Made", stats.get('total_corrections', 0))
+        with col3:
+            accuracy = stats.get('accuracy_rate', 0.0) * 100
+            delta_color = "normal"
+            if accuracy > 80:
+                delta_color = "inverse"
+            st.metric("Current AI Accuracy", f"{accuracy:.1f}%")
+        with col4:
+            confirmations = stats.get('total_confirmations', 0)
+            st.metric("Confirmed Correct", confirmations)
+
+        # Performance Trend Indicator
+        trend = stats.get('improvement_trend', 'Unknown')
+        if accuracy > 85:
+            st.success(f"🎯 **Excellent Performance!** The AI is performing very well with {accuracy:.1f}% accuracy")
+        elif accuracy > 70:
+            st.info(f"📈 **Good Progress!** The AI is learning well with {accuracy:.1f}% accuracy")
+        elif accuracy > 50:
+            st.warning(f"⚠️ **Needs Improvement** - AI accuracy is {accuracy:.1f}%. More training data needed")
+        else:
+            st.error(f"❌ **Requires Attention** - AI accuracy is low at {accuracy:.1f}%")
+
+        # Field-Specific Performance Analysis
+        st.subheader("🎯 Field-Specific AI Performance")
+
+        if 'field_accuracy' in patterns and patterns['field_accuracy']:
+            accuracy_data = patterns['field_accuracy']
+
+            # Create two columns for field analysis
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if PLOTLY_AVAILABLE:
+                    # Create field accuracy bar chart
+                    fields = list(accuracy_data.keys())
+                    accuracies = [accuracy_data[field] * 100 for field in fields]
+
+                    # Color bars based on accuracy
+                    colors = ['#28a745' if acc > 80 else '#ffc107' if acc > 60 else '#dc3545' for acc in accuracies]
+
+                    fig = go.Figure(data=[
+                        go.Bar(
+                            x=[field.replace('_', ' ').title() for field in fields],
+                            y=accuracies,
+                            marker_color=colors,
+                            text=[f"{acc:.1f}%" for acc in accuracies],
+                            textposition='outside',
+                            hovertemplate='<b>%{x}</b><br>Accuracy: %{y:.1f}%<extra></extra>'
+                        )
+                    ])
+
+                    fig.update_layout(
+                        title="Field Extraction Accuracy by Type",
+                        xaxis_title="Invoice Fields",
+                        yaxis_title="Accuracy (%)",
+                        yaxis=dict(range=[0, 100]),
+                        height=400,
+                        showlegend=False
+                    )
+
+                    fig.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("📊 Chart visualization requires Plotly - showing text summary")
+                    for field, accuracy in accuracy_data.items():
+                        field_display = field.replace('_', ' ').title()
+                        color = "🟢" if accuracy > 0.8 else "🟡" if accuracy > 0.6 else "🔴"
+                        st.write(f"{color} **{field_display}:** {accuracy:.0%}")
+
+            with col2:
+                st.markdown("#### 📈 Field Performance Summary")
+
+                # Calculate field statistics
+                high_performance = len([acc for acc in accuracy_data.values() if acc > 0.8])
+                medium_performance = len([acc for acc in accuracy_data.values() if 0.6 <= acc <= 0.8])
+                low_performance = len([acc for acc in accuracy_data.values() if acc < 0.6])
+
+                st.metric("🟢 High Accuracy Fields", f"{high_performance}/{len(accuracy_data)}")
+                st.metric("🟡 Medium Accuracy Fields", f"{medium_performance}/{len(accuracy_data)}")
+                st.metric("🔴 Needs Improvement", f"{low_performance}/{len(accuracy_data)}")
+
+                # Show best and worst performing fields
+                if accuracy_data:
+                    best_field = max(accuracy_data.items(), key=lambda x: x[1])
+                    worst_field = min(accuracy_data.items(), key=lambda x: x[1])
+
+                    st.markdown("**🏆 Best Performing Field:**")
+                    st.success(f"{best_field[0].replace('_', ' ').title()} - {best_field[1]:.0%}")
+
+                    st.markdown("**🎯 Needs Most Attention:**")
+                    if worst_field[1] < 0.7:
+                        st.error(f"{worst_field[0].replace('_', ' ').title()} - {worst_field[1]:.0%}")
+                    else:
+                        st.info(f"{worst_field[0].replace('_', ' ').title()} - {worst_field[1]:.0%}")
+
+        # Learning Patterns Analysis
+        st.subheader("🔍 AI Learning Patterns")
+
+        if 'common_mistakes' in patterns and patterns['common_mistakes']:
+            st.markdown("#### 📚 Most Common Learning Patterns")
+
+            # Show common corrections the AI has learned
+            st.info("💡 These are the most frequent corrections users have made. The AI has learned these patterns!")
+
+            for i, mistake in enumerate(patterns['common_mistakes'][:8], 1):
+                with st.expander(
+                        f"Pattern #{i}: {mistake['field'].replace('_', ' ').title()} - {mistake['count']} occurrences"):
+                    col1, col2, col3 = st.columns([1, 1, 1])
+
+                    with col1:
+                        st.markdown("**❌ AI Originally Extracted:**")
+                        st.code(mistake['wrong'], language=None)
+
+                    with col2:
+                        st.markdown("**✅ Users Corrected To:**")
+                        st.code(mistake['correct'], language=None)
+
+                    with col3:
+                        st.markdown("**📊 Learning Impact:**")
+                        st.metric("Times Corrected", mistake['count'])
+                        st.success("🧠 Pattern Learned!")
+        else:
+            st.info(
+                "🌟 No learning patterns yet. Process more invoices and make corrections to see AI learning patterns!")
+
+        # Areas for Improvement
+        st.subheader("⚠️ Areas for AI Improvement")
+
+        problematic = stats.get('most_problematic_fields', [])
+
+        if problematic:
+            st.warning("🎯 These fields need the most attention based on user corrections:")
+
+            for i, (field_name, error_count) in enumerate(problematic, 1):
+                with st.expander(f"{i}. {field_name.replace('_', ' ').title()} - {error_count} corrections needed"):
+
+                    col1, col2 = st.columns([1, 2])
+
+                    with col1:
+                        st.metric("Total Corrections", error_count)
+
+                        # Calculate improvement suggestions
+                        if error_count > 5:
+                            st.error("🔴 High Priority")
+                            improvement_msg = "This field requires immediate attention. Consider reviewing extraction patterns."
+                        elif error_count > 2:
+                            st.warning("🟡 Medium Priority")
+                            improvement_msg = "This field shows room for improvement with more training data."
+                        else:
+                            st.info("🟢 Low Priority")
+                            improvement_msg = "This field is performing relatively well."
+
+                    with col2:
+                        st.markdown("**🔧 Improvement Recommendations:**")
+                        st.write(improvement_msg)
+
+                        # Show recent corrections for this field if available
+                        try:
+                            db_session = get_db_session()
+                            if db_session:
+                                recent_corrections = db_session.query(UserFeedback).filter(
+                                    UserFeedback.field_name == field_name,
+                                    UserFeedback.feedback_type == 'correction'
+                                ).order_by(UserFeedback.feedback_date.desc()).limit(3).all()
+
+                                if recent_corrections:
+                                    st.markdown("**Recent correction examples:**")
+                                    for correction in recent_corrections:
+                                        st.write(
+                                            f"• `'{correction.original_value}'` → `'{correction.corrected_value}'`")
+                                db_session.close()
+                        except Exception as e:
+                            logger.warning(f"Could not load recent corrections: {e}")
+        else:
+            st.success("🎉 **Excellent!** No major issues detected. The AI is performing well across all fields!")
+
+        # Learning Recommendations
+        st.subheader("💡 AI Training Recommendations")
+
+        total_extractions = stats.get('total_extractions', 0)
+        total_corrections = stats.get('total_corrections', 0)
+
+        recommendations = []
+
+        if total_extractions < 5:
+            recommendations.append("📤 **Process more invoices** - Need at least 10-20 invoices for meaningful learning")
+
+        if total_corrections < 3 and total_extractions > 0:
+            recommendations.append(
+                "✏️ **Provide more corrections** - Even confirming correct extractions helps the AI learn")
+
+        if accuracy < 70 and total_corrections > 10:
+            recommendations.append("🔄 **Review extraction patterns** - Consider improving base extraction rules")
+
+        if accuracy > 85:
+            recommendations.append("🎯 **Excellent progress!** - Continue providing feedback to maintain high accuracy")
+
+        if len(problematic) > 3:
+            recommendations.append("🎯 **Focus on problematic fields** - Target corrections on fields with most errors")
+
+        if recommendations:
+            for rec in recommendations:
+                st.info(rec)
+        else:
+            st.success("🌟 **Great job!** The AI learning system is working optimally!")
+
+        # Future Improvements Preview
+        st.subheader("🚀 Planned AI Enhancements")
+
+        st.markdown("""
+        **Coming Soon:**
+        - 🤖 **Advanced Pattern Recognition** - More sophisticated learning algorithms
+        - 📊 **Confidence Score Improvements** - Better accuracy prediction
+        - 🧮 **Machine Learning Integration** - Deep learning models for complex documents
+        - 📝 **Custom Field Training** - Train AI on company-specific invoice formats
+        - 🔄 **Automatic Model Retraining** - Periodic model updates based on corrections
+        - 📈 **Advanced Analytics** - Detailed performance metrics and trends
+        """)
+
+        # Quick Actions
+        st.subheader("⚡ Quick Actions")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("📤 Process New Invoice", use_container_width=True):
+                st.switch_page("Upload & Process")
+
+        with col2:
+            if st.button("📊 View Feedback History", use_container_width=True):
+                # This would switch to feedback page - for now just show info
+                st.info("💡 Go to 'Feedback & Corrections History' page to see detailed feedback data")
+
+        with col3:
+            if st.button("🔄 Refresh Analytics", use_container_width=True):
+                st.rerun()
+
+    except Exception as e:
+        st.error(f"Error loading AI learning dashboard: {e}")
+        logger.error(f"Error in show_learning_dashboard: {e}")
+
+        # Show basic troubleshooting
+        st.subheader("🔧 Troubleshooting")
+        st.info("""
+        **If you're seeing errors:**
+        1. Make sure you've processed at least one invoice
+        2. Try making some corrections to generate learning data
+        3. Check that the database is working properly
+        4. Refresh the page or restart the application
+        """)
 def stats_page():
     """Display model statistics"""
     st.header("🤖 Model Statistics")
