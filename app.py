@@ -388,7 +388,7 @@ def upload_page():
 
 
 def process_file_with_full_display(uploaded_file):
-    """Process file and store results for full-page display"""
+    """Process file with enhanced learning system and store results for full-page display"""
 
     if not UTILS_AVAILABLE:
         st.error("❌ Utils modules not available - cannot process files")
@@ -411,6 +411,8 @@ def process_file_with_full_display(uploaded_file):
 
         try:
             # Step 1: OCR Processing
+            st.info("🔍 Step 1: Extracting text with OCR...")
+
             tesseract_path = get_tesseract_path()
             ocr_processor = OCRProcessor(tesseract_path)
             file_content = file_handler.get_file_content(uploaded_file)
@@ -424,13 +426,26 @@ def process_file_with_full_display(uploaded_file):
                 st.error(f"❌ OCR failed: {ocr_result.get('error', 'Unknown error')}")
                 return
 
-            # Step 2: Field Extraction
-            field_extractor = FieldExtractor()
-            extracted_fields = field_extractor.extract_all_fields(ocr_result['text'])
+            # Step 2: Enhanced Field Extraction with Learning
+            st.info("🧠 Step 2: Applying AI learning and extracting fields...")
+
+            # Initialize learning system and apply learned patterns
+            learning_system = LearningSystem()
+            base_field_extractor = FieldExtractor()
+
+            # Apply previous learning patterns before extraction
+            enhanced_extractor = learning_system.apply_learned_patterns(
+                base_field_extractor, uploaded_file.name
+            )
+
+            # Extract fields using enhanced extractor
+            extracted_fields = enhanced_extractor.extract_all_fields(ocr_result['text'])
 
             processing_time = time.time() - start_time
 
             # Step 3: Save to Database
+            st.info("💾 Step 3: Saving results to database...")
+
             db_session = get_db_session()
             if not db_session:
                 st.error("❌ Database session could not be created")
@@ -463,7 +478,7 @@ def process_file_with_full_display(uploaded_file):
                     extracted_text=ocr_result['text'],
                     confidence_score=ocr_result['confidence'],
                     processing_time=processing_time,
-                    ocr_method='tesseract',
+                    ocr_method='tesseract_enhanced',
                     pages_processed=ocr_result.get('pages', 1)
                 )
 
@@ -481,20 +496,47 @@ def process_file_with_full_display(uploaded_file):
                     'pages': ocr_result.get('pages', 1)
                 }
 
-                # Success message
-                st.success(f"✅ {uploaded_file.name} processed successfully!")
+                # Show success message with learning info
+                st.success(f"✅ {uploaded_file.name} processed successfully with AI learning!")
 
-                # Quick stats
-                col1, col2, col3 = st.columns(3)
+                # Quick stats with learning enhancement info
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Processing Time", f"{processing_time:.1f}s")
                 with col2:
                     st.metric("OCR Confidence", f"{ocr_result['confidence']:.0%}")
                 with col3:
                     st.metric("Pages", ocr_result.get('pages', 1))
+                with col4:
+                    # Show if learning patterns were applied
+                    patterns_applied = len(learning_system.learned_patterns)
+                    st.metric("AI Patterns", f"{patterns_applied}")
+
+                # Show learning enhancement info
+                if patterns_applied > 0:
+                    st.info(
+                        f"🧠 **AI Enhancement Applied:** Used {patterns_applied} learned patterns from previous corrections to improve accuracy!")
+                else:
+                    st.info("🌟 **First Invoice:** This will help train the AI for future invoices!")
 
                 # Redirect message
-                st.info("📋 **Scroll down to see the full extraction results and provide feedback!**")
+                st.info(
+                    "📋 **Scroll down to review and correct the extracted fields. Your corrections will immediately improve the AI!**")
+
+                # Show brief learning stats
+                try:
+                    stats = learning_system.get_field_statistics()
+                    if stats['total_extractions'] > 0:
+                        with st.expander("📊 Current AI Learning Progress"):
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Invoices", stats['total_extractions'])
+                            with col2:
+                                st.metric("AI Accuracy", f"{stats['accuracy_rate'] * 100:.1f}%")
+                            with col3:
+                                st.metric("User Corrections", stats['total_corrections'])
+                except Exception as e:
+                    logger.warning(f"Could not display learning stats: {e}")
 
             except Exception as e:
                 st.error(f"❌ Database error: {e}")
@@ -508,10 +550,9 @@ def process_file_with_full_display(uploaded_file):
             st.error(f"❌ Processing error: {e}")
             logger.error(f"Error processing {uploaded_file.name}: {traceback.format_exc()}")
 
-
 def display_full_processing_results(invoice_id, filename, extracted_fields, full_text, processing_time, confidence,
                                     pages):
-    """Display the processing results in full-page layout"""
+    """Display the processing results with live editing and learning capabilities"""
 
     # Header with file info
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -523,97 +564,258 @@ def display_full_processing_results(invoice_id, filename, extracted_fields, full
         st.metric("OCR Confidence", f"{confidence:.0%}")
 
     # Create tabs for better organization
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Extracted Fields", "📊 Confidence Analysis", "📄 Raw Text", "✏️ Corrections"])
+    tab1, tab2, tab3 = st.tabs(["📝 Review & Correct Fields", "📊 Confidence Analysis", "📄 Raw Text"])
 
     with tab1:
-        st.subheader("Extracted Information")
+        st.subheader("Extracted Information - Review and Correct")
+        st.info(
+            "💡 Edit any incorrect values below. Your corrections will immediately improve the AI for future invoices!")
 
-        # Create two columns for extracted fields
-        col1, col2 = st.columns(2)
+        # Create the correction form that shows current values
+        with st.form(key=f"live_corrections_form_{invoice_id}"):
 
-        with col1:
-            st.markdown("#### 📄 Document Details")
+            # Create two columns for better layout
+            col1, col2 = st.columns(2)
 
-            # Invoice Number
-            inv_data = extracted_fields.get('invoice_number', {})
-            confidence = inv_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Invoice Number:** `{inv_data.get('value', 'Not found')}` ({confidence:.0%})")
+            corrected_fields = {}
 
-            # Date
-            date_data = extracted_fields.get('date', {})
-            confidence = date_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Date:** `{date_data.get('value', 'Not found')}` ({confidence:.0%})")
+            with col1:
+                st.markdown("#### 📄 Document Details")
 
-            # Supplier
-            supplier_data = extracted_fields.get('supplier', {})
-            confidence = supplier_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Supplier:** `{supplier_data.get('value', 'Not found')}` ({confidence:.0%})")
+                # Invoice Number
+                inv_data = extracted_fields.get('invoice_number', {})
+                confidence = inv_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
 
-            # Customer
-            customer_data = extracted_fields.get('customer', {})
-            confidence = customer_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Customer:** `{customer_data.get('value', 'Not found')}` ({confidence:.0%})")
+                st.markdown(f"{color} **Invoice Number** (Confidence: {confidence:.0%})")
+                corrected_fields['invoice_number'] = st.text_input(
+                    "Invoice Number:",
+                    value=str(inv_data.get('value', '')),
+                    key=f"inv_num_{invoice_id}",
+                    help=f"AI extracted: '{inv_data.get('value', 'Not found')}' with {confidence:.0%} confidence"
+                )
 
-        with col2:
-            st.markdown("#### 💰 Financial Details")
+                # Date
+                date_data = extracted_fields.get('date', {})
+                confidence = date_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
 
-            # Total
-            total_data = extracted_fields.get('total', {})
-            confidence = total_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Total:** `${total_data.get('value', 0):.2f}` ({confidence:.0%})")
+                st.markdown(f"{color} **Invoice Date** (Confidence: {confidence:.0%})")
+                corrected_fields['date'] = st.text_input(
+                    "Invoice Date:",
+                    value=str(date_data.get('value', '')),
+                    key=f"date_{invoice_id}",
+                    help=f"AI extracted: '{date_data.get('value', 'Not found')}' with {confidence:.0%} confidence"
+                )
 
-            # Subtotal
-            subtotal_data = extracted_fields.get('subtotal', {})
-            confidence = subtotal_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **Subtotal:** `${subtotal_data.get('value', 0):.2f}` ({confidence:.0%})")
+                # Supplier
+                supplier_data = extracted_fields.get('supplier', {})
+                confidence = supplier_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
 
-            # VAT
-            vat_data = extracted_fields.get('vat', {})
-            confidence = vat_data.get('confidence', 0)
-            color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-            st.markdown(f"{color} **VAT:** `${vat_data.get('value', 0):.2f}` ({confidence:.0%})")
+                st.markdown(f"{color} **Supplier Name** (Confidence: {confidence:.0%})")
+                corrected_fields['supplier'] = st.text_input(
+                    "Supplier Name:",
+                    value=str(supplier_data.get('value', '')),
+                    key=f"supplier_{invoice_id}",
+                    help=f"AI extracted: '{supplier_data.get('value', 'Not found')}' with {confidence:.0%} confidence"
+                )
 
-        # Overall confidence
-        overall_confidence = calculate_field_confidence_score(extracted_fields)
-        st.markdown("---")
+                # Customer
+                customer_data = extracted_fields.get('customer', {})
+                confidence = customer_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
 
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            st.metric("Overall Confidence", f"{overall_confidence:.1%}")
-        with col2:
-            if overall_confidence > 0.8:
-                st.success("🎯 High confidence")
-            elif overall_confidence > 0.6:
-                st.warning("⚠️ Medium confidence")
-            else:
-                st.error("❌ Low confidence")
-        with col3:
-            st.info("💡 Green = High confidence, Yellow = Medium, Red = Needs review")
+                st.markdown(f"{color} **Customer Name** (Confidence: {confidence:.0%})")
+                corrected_fields['customer'] = st.text_input(
+                    "Customer Name:",
+                    value=str(customer_data.get('value', '')),
+                    key=f"customer_{invoice_id}",
+                    help=f"AI extracted: '{customer_data.get('value', 'Not found')}' with {confidence:.0%} confidence"
+                )
+
+            with col2:
+                st.markdown("#### 💰 Financial Details")
+
+                # Total Amount
+                total_data = extracted_fields.get('total', {})
+                confidence = total_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+
+                st.markdown(f"{color} **Total Amount** (Confidence: {confidence:.0%})")
+                corrected_fields['total'] = st.number_input(
+                    "Total Amount ($):",
+                    value=float(total_data.get('value', 0.0)),
+                    key=f"total_{invoice_id}",
+                    help=f"AI extracted: ${total_data.get('value', 0):.2f} with {confidence:.0%} confidence",
+                    format="%.2f",
+                    min_value=0.0
+                )
+
+                # Subtotal
+                subtotal_data = extracted_fields.get('subtotal', {})
+                confidence = subtotal_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+
+                st.markdown(f"{color} **Subtotal** (Confidence: {confidence:.0%})")
+                corrected_fields['subtotal'] = st.number_input(
+                    "Subtotal ($):",
+                    value=float(subtotal_data.get('value', 0.0)),
+                    key=f"subtotal_{invoice_id}",
+                    help=f"AI extracted: ${subtotal_data.get('value', 0):.2f} with {confidence:.0%} confidence",
+                    format="%.2f",
+                    min_value=0.0
+                )
+
+                # VAT Amount
+                vat_data = extracted_fields.get('vat', {})
+                confidence = vat_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+
+                st.markdown(f"{color} **VAT Amount** (Confidence: {confidence:.0%})")
+                corrected_fields['vat'] = st.number_input(
+                    "VAT Amount ($):",
+                    value=float(vat_data.get('value', 0.0)),
+                    key=f"vat_{invoice_id}",
+                    help=f"AI extracted: ${vat_data.get('value', 0):.2f} with {confidence:.0%} confidence",
+                    format="%.2f",
+                    min_value=0.0
+                )
+
+                # Currency
+                st.markdown("🟡 **Currency** (Manual Entry)")
+                corrected_fields['currency'] = st.selectbox(
+                    "Currency:",
+                    options=["USD", "EUR", "GBP", "CAD", "AUD", "JPY"],
+                    index=0,
+                    key=f"currency_{invoice_id}",
+                    help="Currency detection will be improved in future versions"
+                )
+
+            # Line Items Section (Full Width)
+            st.markdown("---")
+            st.markdown("#### 📋 Line Items Details")
+
+            col3, col4 = st.columns(2)
+
+            with col3:
+                # Line Items Count
+                line_count_data = extracted_fields.get('line_items_count', {})
+                confidence = line_count_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+
+                st.markdown(f"{color} **Line Items Count** (Confidence: {confidence:.0%})")
+                corrected_fields['line_items_count'] = st.number_input(
+                    "Number of Line Items:",
+                    value=int(line_count_data.get('value', 0)),
+                    min_value=0,
+                    max_value=100,
+                    key=f"line_count_{invoice_id}",
+                    help="Count the number of individual items/services listed"
+                )
+
+            with col4:
+                # Line Items Subtotal
+                line_subtotal_data = extracted_fields.get('line_items_subtotal', {})
+                confidence = line_subtotal_data.get('confidence', 0)
+                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+
+                st.markdown(f"{color} **Line Items Subtotal** (Confidence: {confidence:.0%})")
+                corrected_fields['line_items_subtotal'] = st.number_input(
+                    "Line Items Subtotal ($):",
+                    value=float(line_subtotal_data.get('value', 0.0)),
+                    key=f"line_subtotal_{invoice_id}",
+                    help="Sum of all line item amounts before tax",
+                    format="%.2f",
+                    min_value=0.0
+                )
+
+            # Overall confidence display
+            overall_confidence = calculate_field_confidence_score(extracted_fields)
+
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1, 1, 2])
+
+            with col1:
+                st.metric("Overall AI Confidence", f"{overall_confidence:.1%}")
+
+            with col2:
+                if overall_confidence > 0.8:
+                    st.success("🎯 High Confidence")
+                elif overall_confidence > 0.6:
+                    st.warning("⚠️ Medium Confidence")
+                else:
+                    st.error("❌ Low Confidence")
+
+            with col3:
+                st.info("💡 Green = High confidence (>80%), Yellow = Medium (50-80%), Red = Low (<50%)")
+
+            # Submit buttons section
+            st.markdown("---")
+
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+
+            with col_btn1:
+                submitted = st.form_submit_button(
+                    "🧠 Save Corrections & Train AI",
+                    type="primary",
+                    use_container_width=True,
+                    help="Save your corrections and immediately improve the AI"
+                )
+
+            with col_btn2:
+                approved = st.form_submit_button(
+                    "✅ All Correct - Confirm",
+                    use_container_width=True,
+                    help="Confirm all extractions are correct"
+                )
+
+            with col_btn3:
+                st.markdown(
+                    "**🔄 Real-time Learning:** Your corrections immediately improve accuracy for future invoices!")
+
+            # Handle form submissions
+            if submitted:
+                handle_user_corrections_with_learning(invoice_id, extracted_fields, corrected_fields, filename)
+
+            if approved:
+                handle_user_approval_with_learning(invoice_id, extracted_fields, filename)
 
     with tab2:
-        st.subheader("📊 Confidence Analysis")
+        st.subheader("📊 Confidence Analysis & Learning Progress")
 
-        if PLOTLY_AVAILABLE:
-            create_confidence_chart(extracted_fields)
-        else:
-            st.warning("Plotly not available - showing text summary")
+        # Show current extraction confidence
+        col1, col2 = st.columns([1, 1])
 
-            # Text-based confidence summary
-            confidences = []
-            for field_name, field_data in extracted_fields.items():
-                if isinstance(field_data, dict) and 'confidence' in field_data:
-                    confidences.append((field_name, field_data['confidence']))
+        with col1:
+            if PLOTLY_AVAILABLE:
+                create_confidence_chart(extracted_fields)
+            else:
+                st.warning("Plotly not available - showing text summary")
+                show_confidence_text_summary(extracted_fields)
 
-            st.write("**Field Confidence Scores:**")
-            for field_name, confidence in confidences:
-                color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
-                st.write(f"{color} {field_name.title()}: {confidence:.0%}")
+        with col2:
+            # Show learning statistics
+            st.markdown("#### 🧠 AI Learning Progress")
+
+            try:
+                learning_system = LearningSystem()
+                learning_stats = learning_system.get_field_statistics()
+
+                st.metric("Total Invoices Processed", learning_stats.get('total_extractions', 0))
+                st.metric("User Corrections Made", learning_stats.get('total_corrections', 0))
+                st.metric("Current AI Accuracy", f"{learning_stats.get('accuracy_rate', 0) * 100:.1f}%")
+
+                # Show most improved fields
+                patterns = learning_system.get_learning_patterns()
+                if 'field_accuracy' in patterns and patterns['field_accuracy']:
+                    st.markdown("**📈 Field Accuracy:**")
+                    for field, accuracy in patterns['field_accuracy'].items():
+                        color = "🟢" if accuracy > 0.8 else "🟡" if accuracy > 0.6 else "🔴"
+                        st.write(f"{color} {field.title()}: {accuracy:.0%}")
+
+            except Exception as e:
+                st.warning(f"Learning statistics temporarily unavailable: {e}")
 
     with tab3:
         st.subheader("📄 Raw Extracted Text")
@@ -632,8 +834,23 @@ def display_full_processing_results(invoice_id, filename, extracted_fields, full
             reading_time = max(1, word_count // 200)
             st.metric("Est. Reading Time", f"{reading_time} min")
 
-        # Display text
-        st.text_area("Full OCR Text:", full_text, height=400, disabled=True)
+        # Display text in chunks if too long
+        if len(full_text) > 3000:
+            st.info("📄 Text is long - showing in expandable sections")
+            chunk_size = 1500
+            chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
+
+            for i, chunk in enumerate(chunks):
+                with st.expander(f"📝 Text Section {i + 1} of {len(chunks)}"):
+                    st.text_area(
+                        f"Section {i + 1}:",
+                        value=chunk,
+                        height=200,
+                        disabled=True,
+                        key=f"text_chunk_{invoice_id}_{i}"
+                    )
+        else:
+            st.text_area("Full OCR Text:", full_text, height=400, disabled=True)
 
         # Download option
         st.download_button(
@@ -643,40 +860,142 @@ def display_full_processing_results(invoice_id, filename, extracted_fields, full
             mime="text/plain"
         )
 
-    with tab4:
-        st.subheader("✏️ Quick Corrections")
 
-        with st.form(f"corrections_{invoice_id}"):
-            st.write("Help improve the AI by correcting any errors:")
+def handle_user_corrections_with_learning(invoice_id, original_fields, corrected_fields, filename):
+    """Handle user corrections with advanced learning system"""
 
-            col1, col2 = st.columns(2)
+    try:
+        learning_system = LearningSystem()
 
-            with col1:
-                corrected_invoice_number = st.text_input("Invoice Number:", value=str(
-                    extracted_fields.get('invoice_number', {}).get('value', '')))
-                corrected_supplier = st.text_input("Supplier:",
-                                                   value=str(extracted_fields.get('supplier', {}).get('value', '')))
-                corrected_date = st.text_input("Date:", value=str(extracted_fields.get('date', {}).get('value', '')))
+        # Count and analyze corrections
+        corrections_made = 0
+        correction_details = []
 
-            with col2:
-                corrected_total = st.number_input("Total Amount:",
-                                                  value=float(extracted_fields.get('total', {}).get('value', 0)),
-                                                  format="%.2f")
-                corrected_vat = st.number_input("VAT Amount:",
-                                                value=float(extracted_fields.get('vat', {}).get('value', 0)),
-                                                format="%.2f")
-                corrected_customer = st.text_input("Customer:",
-                                                   value=str(extracted_fields.get('customer', {}).get('value', '')))
+        for field_name in original_fields.keys():
+            original_value = str(original_fields[field_name]['value']).strip()
+            corrected_value = str(corrected_fields.get(field_name, original_value)).strip()
 
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.form_submit_button("💾 Save Corrections", type="primary"):
-                    st.success("✅ Thank you! Your corrections will help improve the AI.")
-                    st.info("🧠 Full learning system will be implemented in the next phase.")
-            with col2:
-                st.info("💡 Your corrections help train the AI to be more accurate for future invoices.")
+            if original_value != corrected_value:
+                corrections_made += 1
+                correction_details.append({
+                    'field': field_name,
+                    'original': original_value,
+                    'corrected': corrected_value,
+                    'confidence': original_fields[field_name]['confidence']
+                })
+
+        if corrections_made > 0:
+            # Save corrections to database and update learning patterns
+            success = learning_system.save_field_corrections(
+                invoice_id, original_fields, corrected_fields
+            )
+
+            if success:
+                # Show detailed feedback about what was learned
+                st.success(f"🧠 **AI Training Complete!** Made {corrections_made} corrections")
+
+                # Show learning impact
+                with st.expander("📊 See Learning Impact", expanded=True):
+
+                    # Show what was corrected
+                    st.markdown("**✏️ Corrections Made:**")
+                    for detail in correction_details:
+                        st.write(f"• **{detail['field'].title()}:** '{detail['original']}' → '{detail['corrected']}'")
+
+                    # Show updated statistics
+                    try:
+                        updated_stats = learning_system.get_field_statistics()
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Invoices", updated_stats.get('total_extractions', 0))
+                        with col2:
+                            st.metric("Total Corrections", updated_stats.get('total_corrections', 0))
+                        with col3:
+                            accuracy = updated_stats.get('accuracy_rate', 0.0) * 100
+                            st.metric("Updated Accuracy", f"{accuracy:.1f}%")
+
+                        # Show most problematic fields
+                        problematic = updated_stats.get('most_problematic_fields', [])
+                        if problematic:
+                            st.markdown("**🎯 Fields Being Improved:**")
+                            for field_name, error_count in problematic[:3]:
+                                st.write(f"• {field_name.title()}: {error_count} corrections needed")
+
+                        st.success("🚀 The AI will now be more accurate for these fields in future invoices!")
+
+                    except Exception as e:
+                        st.warning(f"Could not load updated statistics: {e}")
+            else:
+                st.error("❌ Failed to save corrections. Please try again.")
+        else:
+            st.info("ℹ️ No corrections detected. All extractions confirmed as accurate!")
+            # Still save as positive feedback
+            handle_user_approval_with_learning(invoice_id, original_fields, filename)
+
+    except Exception as e:
+        st.error(f"❌ Error processing corrections: {e}")
+        logger.error(f"Error in handle_user_corrections_with_learning: {e}")
 
 
+def handle_user_approval_with_learning(invoice_id, extracted_fields, filename):
+    """Handle user approval (all extractions correct) with learning"""
+
+    try:
+        learning_system = LearningSystem()
+
+        # Create dummy corrected_fields that match original (no changes)
+        corrected_fields = {}
+        for field_name, field_data in extracted_fields.items():
+            corrected_fields[field_name] = field_data['value']
+
+        # Save as confirmation feedback
+        success = learning_system.save_field_corrections(
+            invoice_id, extracted_fields, corrected_fields
+        )
+
+        if success:
+            st.success("✅ **Excellent!** All extractions confirmed correct - AI confidence boosted!")
+
+            with st.expander("📈 Positive Learning Impact"):
+                st.write("**🎯 Confirmed Accurate Fields:**")
+                for field_name, field_data in extracted_fields.items():
+                    confidence = field_data['confidence']
+                    value = field_data['value']
+                    if confidence > 0 and value:  # Only show fields that had values
+                        st.write(f"• **{field_name.title()}:** '{value}' ({confidence:.0%} confidence)")
+
+                st.info("🧠 These confirmations help the AI understand when it's performing well!")
+        else:
+            st.error("❌ Failed to save confirmation. Please try again.")
+
+    except Exception as e:
+        st.error(f"❌ Error processing approval: {e}")
+        logger.error(f"Error in handle_user_approval_with_learning: {e}")
+
+
+def show_confidence_text_summary(extracted_fields):
+    """Show confidence summary when Plotly is not available"""
+    st.markdown("**📊 Field Confidence Scores:**")
+
+    confidences = []
+    for field_name, field_data in extracted_fields.items():
+        if isinstance(field_data, dict) and 'confidence' in field_data:
+            confidence = field_data['confidence']
+            confidences.append((field_name, confidence))
+
+    # Sort by confidence (lowest first to highlight problems)
+    confidences.sort(key=lambda x: x[1])
+
+    for field_name, confidence in confidences:
+        color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+        field_display = field_name.replace('_', ' ').title()
+        st.write(f"{color} **{field_display}:** {confidence:.0%}")
+
+    # Summary
+    if confidences:
+        avg_confidence = sum(c[1] for c in confidences) / len(confidences)
+        st.metric("Average Confidence", f"{avg_confidence:.0%}")
 def show_recent_extractions():
     """Show recent extractions for reference"""
     st.subheader("📚 Recent Extractions")
