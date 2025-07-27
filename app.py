@@ -1,6 +1,84 @@
+# Add these imports at the top of your app.py file if they're missing:
+
 import streamlit as st
+import pandas as pd
+import os
+from datetime import datetime
 from PIL import Image
-import io
+import sys
+import traceback
+import time
+import logging
+from typing import Dict, List, Any, Optional
+
+# Database imports - add these if missing
+try:
+    from database.models import init_database, get_db_session, Invoice, OCRResult, FieldExtraction, UserFeedback
+except ImportError as e:
+    st.error(f"Database import error: {e}")
+
+
+    # Create dummy functions for testing
+    def init_database():
+        return None, None
+
+
+    def get_db_session():
+        return None
+
+# Utils imports - add these if missing
+try:
+    from utils.ocr_processor import OCRProcessor, get_tesseract_path
+    from utils.file_handler import FileHandler, get_file_preview_info
+    from utils.field_extractor import FieldExtractor, calculate_field_confidence_score
+    from utils.learning_system import LearningSystem
+except ImportError as e:
+    st.warning(f"Utils import error: {e}")
+
+
+    # Create dummy classes for testing
+    class OCRProcessor:
+        def __init__(self, path=None): pass
+
+        def process_file(self, *args): return {'success': False, 'error': 'Not available'}
+
+
+    class FileHandler:
+        def validate_file(self, *args): return {'valid': True, 'file_type': 'unknown'}
+
+        def get_file_content(self, *args): return b''
+
+
+    class FieldExtractor:
+        def extract_all_fields(self, *args): return {}
+
+
+    class LearningSystem:
+        def get_field_statistics(self): return {'total_extractions': 0, 'total_corrections': 0, 'accuracy_rate': 0.0}
+
+        def apply_learned_patterns(self, *args): return None
+
+
+    def get_tesseract_path():
+        return 'tesseract'
+
+
+    def get_file_preview_info(file):
+        return {'name': file.name, 'type': file.type, 'size': file.size}
+
+
+    def calculate_field_confidence_score(fields):
+        return 0.0
+
+# Plotly imports - add these if missing
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    st.warning("Plotly not available - charts will be disabled")
+    PLOTLY_AVAILABLE = False
 
 # Try to import pytesseract with error handling
 try:
