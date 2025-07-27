@@ -393,10 +393,210 @@ def preview_file(uploaded_file):
 
 def process_file(uploaded_file):
     """Process a single file with OCR and field extraction"""
-    st.info("⚠️ Full processing functionality requires database and utils modules")
-    st.info("📝 For now, use the 'Tesseract Test' page to test OCR functionality")
 
+    if not UTILS_AVAILABLE:
+        st.error("❌ Utils modules not available - cannot process files")
+        return
 
+    if not DATABASE_AVAILABLE:
+        st.error("❌ Database not available - cannot save results")
+        return
+
+    # Validate file first
+    file_handler = FileHandler()
+    validation = file_handler.validate_file(uploaded_file)
+
+    if not validation['valid']:
+        st.error(f"❌ {validation['error']}")
+        return
+
+    with st.spinner(f"Processing {uploaded_file.name}..."):
+        start_time = time.time()
+
+        try:
+            # Step 1: OCR Processing
+            st.info("🔍 Step 1: Extracting text with OCR...")
+
+            tesseract_path = get_tesseract_path()
+            ocr_processor = OCRProcessor(tesseract_path)
+            file_content = file_handler.get_file_content(uploaded_file)
+            file_type = validation['file_type']
+
+            ocr_result = ocr_processor.process_file(
+                file_content, file_type, uploaded_file.name
+            )
+
+            if not ocr_result['success']:
+                st.error(f"❌ OCR failed: {ocr_result.get('error', 'Unknown error')}")
+                return
+
+            # Step 2: Field Extraction
+            st.info("🎯 Step 2: Extracting invoice fields...")
+
+            field_extractor = FieldExtractor()
+            extracted_fields = field_extractor.extract_all_fields(ocr_result['text'])
+
+            processing_time = time.time() - start_time
+
+            # Step 3: Save to Database
+            st.info("💾 Step 3: Saving to database...")
+
+            db_session = get_db_session()
+            if not db_session:
+                st.error("❌ Database session could not be created")
+                return
+
+            try:
+                # Create invoice record
+                new_invoice = Invoice(
+                    filename=uploaded_file.name,
+                    file_type=file_type,
+                    processing_status='processed',
+                    raw_text=ocr_result['text'][:10000],  # Limit text length
+                    invoice_number=extracted_fields.get('invoice_number', {}).get('value', ''),
+                    invoice_date=extracted_fields.get('date', {}).get('value', ''),
+                    supplier_name=extracted_fields.get('supplier', {}).get('value', ''),
+                    total_amount=extracted_fields.get('total', {}).get('value', 0.0),
+                    vat_amount=extracted_fields.get('vat', {}).get('value', 0.0),
+                    confidence_invoice_number=extracted_fields.get('invoice_number', {}).get('confidence', 0.0),
+                    confidence_date=extracted_fields.get('date', {}).get('confidence', 0.0),
+                    confidence_supplier=extracted_fields.get('supplier', {}).get('confidence', 0.0),
+                    confidence_total=extracted_fields.get('total', {}).get('confidence', 0.0)
+                )
+
+                db_session.add(new_invoice)
+                db_session.flush()  # Get the ID
+
+                # Create OCR result record
+                ocr_record = OCRResult(
+                    invoice_id=new_invoice.id,
+                    extracted_text=ocr_result['text'],
+                    confidence_score=ocr_result['confidence'],
+                    processing_time=processing_time,
+                    ocr_method='tesseract',
+                    pages_processed=ocr_result.get('pages', 1)
+                )
+
+                db_session.add(ocr_record)
+                db_session.commit()
+
+                # Step 4: Display Results
+                st.success(f"✅ {uploaded_file.name} processed successfully!")
+
+                # Show processing stats
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Processing Time", f"{processing_time:.1f}s")
+                with col2:
+                    st.metric("OCR Confidence", f"{ocr_result['confidence']:.0%}")
+                with col3:
+                    st.metric("Pages", ocr_result.get('pages', 1))
+
+                # Display extracted fields in a nice format
+                st.subheader("📋 Extracted Information")
+
+                # Create two columns for extracted fields
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("#### 📄 Document Details")
+
+                    # Invoice Number
+                    inv_data = extracted_fields.get('invoice_number', {})
+                    confidence = inv_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Invoice Number:** {inv_data.get('value', 'Not found')} ({confidence:.0%})")
+
+                    # Date
+                    date_data = extracted_fields.get('date', {})
+                    confidence = date_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Date:** {date_data.get('value', 'Not found')} ({confidence:.0%})")
+
+                    # Supplier
+                    supplier_data = extracted_fields.get('supplier', {})
+                    confidence = supplier_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Supplier:** {supplier_data.get('value', 'Not found')} ({confidence:.0%})")
+
+                    # Customer
+                    customer_data = extracted_fields.get('customer', {})
+                    confidence = customer_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Customer:** {customer_data.get('value', 'Not found')} ({confidence:.0%})")
+
+                with col2:
+                    st.markdown("#### 💰 Financial Details")
+
+                    # Total
+                    total_data = extracted_fields.get('total', {})
+                    confidence = total_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Total:** ${total_data.get('value', 0):.2f} ({confidence:.0%})")
+
+                    # Subtotal
+                    subtotal_data = extracted_fields.get('subtotal', {})
+                    confidence = subtotal_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **Subtotal:** ${subtotal_data.get('value', 0):.2f} ({confidence:.0%})")
+
+                    # VAT
+                    vat_data = extracted_fields.get('vat', {})
+                    confidence = vat_data.get('confidence', 0)
+                    color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.5 else "🔴"
+                    st.write(f"{color} **VAT:** ${vat_data.get('value', 0):.2f} ({confidence:.0%})")
+
+                # Overall confidence
+                overall_confidence = calculate_field_confidence_score(extracted_fields)
+                st.markdown("---")
+                st.metric("Overall Extraction Confidence", f"{overall_confidence:.1%}")
+
+                if overall_confidence > 0.8:
+                    st.success("🎯 High confidence extraction - likely accurate!")
+                elif overall_confidence > 0.6:
+                    st.warning("⚠️ Medium confidence - please review results")
+                else:
+                    st.error("❌ Low confidence - manual review recommended")
+
+                # Show extracted text
+                with st.expander("📄 View Full Extracted Text"):
+                    st.text_area("OCR Text:", ocr_result['text'], height=300, disabled=True)
+
+                # Quick correction form
+                st.markdown("---")
+                st.subheader("✏️ Quick Corrections (Optional)")
+
+                with st.form(f"corrections_{new_invoice.id}"):
+                    st.write("Correct any errors to help improve the AI:")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        corrected_invoice_number = st.text_input("Invoice Number:",
+                                                                 value=str(inv_data.get('value', '')))
+                        corrected_supplier = st.text_input("Supplier:", value=str(supplier_data.get('value', '')))
+
+                    with col2:
+                        corrected_total = st.number_input("Total Amount:", value=float(total_data.get('value', 0)),
+                                                          format="%.2f")
+                        corrected_date = st.text_input("Date:", value=str(date_data.get('value', '')))
+
+                    if st.form_submit_button("💾 Save Corrections"):
+                        # Save corrections (simplified for now)
+                        st.success("✅ Thank you! Your corrections will help improve the AI.")
+                        st.info("🧠 Full learning system will be implemented in the next phase.")
+
+            except Exception as e:
+                st.error(f"❌ Database error: {e}")
+                if db_session:
+                    db_session.rollback()
+            finally:
+                if db_session:
+                    db_session.close()
+
+        except Exception as e:
+            st.error(f"❌ Processing error: {e}")
+            logger.error(f"Error processing {uploaded_file.name}: {traceback.format_exc()}")
 def process_all_files(uploaded_files):
     """Process all uploaded files"""
     st.info("⚠️ Bulk processing functionality will be available once individual processing is working")
